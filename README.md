@@ -1,6 +1,4 @@
-# PCA-Mini-Project---Face-Detection-or-Convert-an-image-into-gray-scale-image-using-CUD
-Mini Project - Face Detection or Convert an image into gray scale image using CUDA GPU programming
-# Convert Image to Grayscale image using CUDA 
+# Face-Detection-or-Convert-an-image-into-gray-scale-image-using-CUDA
 
 ## AIM:
 
@@ -17,120 +15,124 @@ The aim of this project is to demonstrate how to convert an image to grayscale u
 8. Clean up allocated memory.
 
 ## Program:
-```
-Name   : MOHAMED ATHIL B
-Reg No : 212222230081
-```
-```c
-#include <stdio.h>
-#include <string>
-#include <math.h>
+### DEVELOPED BY : MOHAMED ATHIL B
+### REGISTER NO : 212222230081
+
+```cuda c
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
 #include <iostream>
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
+#include <string>
+#include <cassert>
 
+#include "stb_image.h"
+#include "stb_image_write.h"
 
-__global__
-void colorConvertToGrey(unsigned char *rgb, unsigned char *grey, int rows, int cols)
+struct Pixel
 {
-	int col = threadIdx.x + blockIdx.x * blockDim.x;
-	int row = threadIdx.y + blockIdx.y * blockDim.y;
+    unsigned char r, g, b, a;
+};
 
-	if (col < cols && row < rows)
-	{
-		int grey_offset = row * cols + col;
-		int rgb_offset = grey_offset * CHANNELS;
-	
-    	unsigned char r = rgb[rgb_offset + 0];
-	    unsigned char g = rgb[rgb_offset + 1];
-	    unsigned char b = rgb[rgb_offset + 2];
-	
-	    grey[grey_offset] = r * 0.299f + g * 0.587f + b * 0.114f;
+void ConvertImageToGrayCpu(unsigned char* imageRGBA, int width, int height)
+{
+    for (int y = 0; y < height; y++)
+    {
+        for (int x = 0; x < width; x++)
+        {
+            Pixel* ptrPixel = (Pixel*)&imageRGBA[y * width * 4 + 4 * x];
+            unsigned char pixelValue = (unsigned char)(ptrPixel->r * 0.2126f + ptrPixel->g * 0.7152f + ptrPixel->b * 0.0722f);
+            ptrPixel->r = pixelValue;
+            ptrPixel->g = pixelValue;
+            ptrPixel->b = pixelValue;
+            ptrPixel->a = 255;
+        }
     }
 }
 
-size_t loadImageFile(unsigned char *grey_image, const std::string &input_file, int *rows, int *cols );
-
-void outputImage(const std::string &output_file, unsigned char *grey_image, int rows, int cols);
-
-unsigned char *h_rgb_image; 
-
-int main(int argc, char **argv) 
+__global__ void ConvertImageToGrayGpu(unsigned char* imageRGBA)
 {
-	std::string input_file;
-	std::string output_file;
+    uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
+    uint32_t idx = y * blockDim.x * gridDim.x + x;
 
-	switch(argc) {
-		case 3:
-			input_file = std::string(argv[1]);
-			output_file = std::string(argv[2]);
-            break;
-		default:
-			std::cerr << "Usage: <executable> input_file output_file";
-			exit(1);
-	}
-	
-	unsigned char *d_rgb_image; 
-	unsigned char *h_grey_image, *d_grey_image; 
-	int rows; 
-	int cols; 
-	
-	const size_t total_pixels = loadImageFile(h_grey_image, input_file, &rows, &cols);
-
-	h_grey_image = (unsigned char *)malloc(sizeof(unsigned char*)* total_pixels);
-
-	cudaMalloc(&d_rgb_image, sizeof(unsigned char) * total_pixels * CHANNELS);
-	cudaMalloc(&d_grey_image, sizeof(unsigned char) * total_pixels);
-	cudaMemset(d_grey_image, 0, sizeof(unsigned char) * total_pixels);
-	
-	cudaMemcpy(d_rgb_image, h_rgb_image, sizeof(unsigned char) * total_pixels * CHANNELS, cudaMemcpyHostToDevice);
-
-	const dim3 dimGrid((int)ceil((cols)/16), (int)ceil((rows)/16));
-	const dim3 dimBlock(16, 16);
-	
-	colorConvertToGrey<<<dimGrid, dimBlock>>>(d_rgb_image, d_grey_image, rows, cols);
-
-	cudaMemcpy(h_grey_image, d_grey_image, sizeof(unsigned char) * total_pixels, cudaMemcpyDeviceToHost);
-
-	outputImage(output_file, h_grey_image, rows, cols);
-	cudaFree(d_rgb_image);
-	cudaFree(d_grey_image);
-	return 0;
+    Pixel* ptrPixel = (Pixel*)&imageRGBA[idx * 4];
+    unsigned char pixelValue = (unsigned char)
+        (ptrPixel->r * 0.2126f + ptrPixel->g * 0.7152f + ptrPixel->b * 0.0722f);
+    ptrPixel->r = pixelValue;
+    ptrPixel->g = pixelValue;
+    ptrPixel->b = pixelValue;
+    ptrPixel->a = 255;
 }
 
-size_t loadImageFile(unsigned char *grey_image, const std::string &input_file, int *rows, int *cols) 
+int main(int argc, char** argv)
 {
-	cv::Mat img_data; 
+    // Check argument count
+    if (argc < 2)
+    {
+        std::cout << "Usage: 02_ImageToGray <filename>";
+        return -1;
+    }
 
-	img_data = cv::imread(input_file.c_str(), CV_LOAD_IMAGE_COLOR);
-	if (img_data.empty()) 
-	{
-		std::cerr << "Unable to laod image file: " << input_file << std::endl;
-	}
-		
-	*rows = img_data.rows;
-	*cols = img_data.cols;
+    // Open image
+    int width, height, componentCount;
+    std::cout << "Loading png file...";
+    unsigned char* imageData = stbi_load(argv[1], &width, &height, &componentCount, 4);
+    if (!imageData)
+    {
+        std::cout << std::endl << "Failed to open \"" << argv[1] << "\"";
+        return -1;
+    }
+    std::cout << " DONE" << std::endl;
 
-	h_rgb_image = (unsigned char*) malloc(*rows * *cols * sizeof(unsigned char) * 3);
-	unsigned char* rgb_image = (unsigned char*)img_data.data;
+    // Validate image sizes
+    if (width % 32 || height % 32)
+    {
+        // NOTE: Leaked memory of "imageData"
+        std::cout << "Width and/or Height is not dividable by 32!";
+        return -1;
+    }
 
-	int x = 0;
-	for (x = 0; x < *rows * *cols * 3; x++)
-	{
-		h_rgb_image[x] = rgb_image[x];
-	}
-	
-	size_t num_of_pixels = img_data.rows * img_data.cols;
-	
-	return num_of_pixels;
-}
+    
+    // Process image on cpu
+    std::cout << "Processing image...";
+    ConvertImageToGrayCpu(imageData, width, height);
+    std::cout << " DONE" << std::endl;
+    
 
-void outputImage(const std::string& output_file, unsigned char* grey_image, int rows, int cols)
-{
+    // Copy data to the gpu
+    /*
+    std::cout << "Copy data to GPU...";
+    unsigned char* ptrImageDataGpu = nullptr;
+    assert(cudaMalloc(&ptrImageDataGpu, width * height * 4) == cudaSuccess);
+    assert(cudaMemcpy(ptrImageDataGpu, imageData, width * height * 4, cudaMemcpyHostToDevice) == cudaSuccess);
+    std::cout << " DONE" << std::endl;
 
-	cv::Mat greyData(rows, cols, CV_8UC1,(void *) grey_image);
-	cv::imwrite(output_file.c_str(), greyData);
+    // Process image on gpu
+    std::cout << "Running CUDA Kernel...";
+    dim3 blockSize(32, 32);
+    dim3 gridSize(width / blockSize.x, height / blockSize.y);
+    ConvertImageToGrayGpu<<<gridSize, blockSize>>>(ptrImageDataGpu);
+    //auto err = cudaGetLastError();
+    std::cout << " DONE" << std::endl;
+
+    // Copy data from the gpu
+    std::cout << "Copy data from GPU...";
+    assert(cudaMemcpy(imageData, ptrImageDataGpu, width * height * 4, cudaMemcpyDeviceToHost) == cudaSuccess);
+    std::cout << " DONE" << std::endl;
+    */
+    // Build output filename
+    std::string fileNameOut = argv[1];
+    fileNameOut = fileNameOut.substr(0, fileNameOut.find_last_of('.')) + "_gray.png";
+
+    // Write image back to disk
+    std::cout << "Writing png to disk...";
+    stbi_write_png(fileNameOut.c_str(), width, height, 4, imageData, 4 * width);
+    std::cout << " DONE";
+
+    // Free memory
+    //cudaFree(ptrImageDataGpu);
+    stbi_image_free(imageData);
 }
 ```
 
@@ -138,12 +140,11 @@ void outputImage(const std::string& output_file, unsigned char* grey_image, int 
 
 ### Input Image
 
-![parallel_mini](https://github.com/Aswini-J/PCA---Mini-Project-Mini-Project---Face-Detection-or-Convert-an-image-into-gray-scale-image-using-CUD/assets/119559905/eba37e17-0838-438f-a299-187e9590ac24)
-
+![pca_mini_1 1](https://github.com/gummadileepkumar/PCA---Mini-Project-Mini-Project---Face-Detection-or-Convert-an-image-into-gray-scale-image-using-CUD/assets/118707761/8172c682-6ab8-44b5-8e17-76b860af7c18)
 
 ### Grayscale Image
 
-![output-onlinetools](https://github.com/Aswini-J/PCA---Mini-Project-Mini-Project---Face-Detection-or-Convert-an-image-into-gray-scale-image-using-CUD/assets/119559905/0263729b-08cb-4d0f-bfa9-a343444cbb37)
+![pca_mini_1 2](https://github.com/gummadileepkumar/PCA---Mini-Project-Mini-Project---Face-Detection-or-Convert-an-image-into-gray-scale-image-using-CUD/assets/118707761/ce09735f-104b-497e-977b-fcbc4daa4dac)
 
 
 ## Result:
